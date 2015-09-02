@@ -1,11 +1,9 @@
 require 'money'
-require 'savon'
+require 'nokogiri'
 
 class Money
   module Bank
     class RussianCentralBank < Money::Bank::VariableExchange
-
-      CBR_SERVICE_URL = 'http://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx?WSDL'
 
       attr_reader :rates_updated_at, :rates_updated_on, :ttl, :rates_expired_at
 
@@ -30,7 +28,7 @@ class Money
         @rates[rate_key_for(to, from)] = 1.0 / rate
       end
 
-      def get_rate from, to
+      def get_rate(from, to)
         update_rates if rates_expired?
         @rates[rate_key_for(from, to)] || indirect_rate(from, to)
       end
@@ -55,25 +53,35 @@ class Money
         end
       end
 
-      def indirect_rate from, to
+      def indirect_rate(from, to)
         from_base_rate = @rates[rate_key_for('RUB', from)]
         to_base_rate = @rates[rate_key_for('RUB', to)]
         to_base_rate / from_base_rate
       end
 
       def exchange_rates(date)
-        client = Savon::Client.new(wsdl: CBR_SERVICE_URL, log: false, log_level: :error)
-        response = client.call(:get_curs_on_date, message: { 'On_date' => date.strftime('%Y-%m-%dT%H:%M:%S') })
-        response.body[:get_curs_on_date_response][:get_curs_on_date_result][:diffgram][:valute_data][:valute_curs_on_date]
+        xml = Nokogiri::XML(Net::HTTP.get(URI(get_url(date))))
+        xml.xpath('//ValCurs/Valute').map do |el|
+          subs = el.elements
+          hash = {}
+          hash[:code] = subs.find {|v| v.name == 'CharCode' }.text
+          hash[:nominal] = subs.find {|v| v.name == 'Nominal' }.text.to_i
+          hash[:value] = subs.find {|v| v.name == 'Value' }.text.gsub(',', '.').to_f
+          hash
+        end
       end
 
-      def update_parsed_rates rates
+      def get_url(date)
+        "http://www.cbr.ru/scripts/XML_daily.asp?date_req=#{date.strftime('%d/%m/%Y')}"
+      end
+
+      def update_parsed_rates(rates)
         local_currencies = Money::Currency.table.map { |currency| currency.last[:iso_code] }
         add_rate('RUB', 'RUB', 1)
-        rates.each do |rate|
+        rates.each do |hash|
           begin
-            if local_currencies.include? rate[:vch_code]
-              add_rate('RUB', rate[:vch_code], 1/ (rate[:vcurs].to_f / rate[:vnom].to_i))
+            if local_currencies.include? hash[:code]
+              add_rate('RUB', hash[:code], 1/ (hash[:value] / hash[:nominal]) )
             end
           rescue Money::Currency::UnknownCurrency
           end

@@ -18,7 +18,7 @@ Or install it yourself as:
 
 ##Dependencies
 
-* savon
+* nokogiri
 * money
 
 ## Usage

@@ -1,5 +1,5 @@
 require 'russian_central_bank'
-require 'savon'
+require 'webmock/rspec'
 require 'support/helpers'
 
 
